@@ -40,7 +40,7 @@ func getPhoto(source string, photoName string) (err error) {
 	return
 }
 
-func worker(id int, jobs <-chan fb.Result) {
+func worker(id int, jobs <-chan fb.Result, result chan<- error) {
 	for photo := range jobs {
 		source := photo["source"].(string)
 		width := photo["width"].(json.Number)
@@ -49,12 +49,9 @@ func worker(id int, jobs <-chan fb.Result) {
 		photoHeight, _ := height.Int64()
 		photoName, err := getPhotoName(source, photoWidth, photoHeight)
 		if err != nil {
-			log.Println(err)
+			result <- err
 		} else {
-			err := getPhoto(source, photoName)
-			if err != nil {
-				log.Println(err)
-			}
+			result <- getPhoto(source, photoName)
 		}
 	}
 }
@@ -65,6 +62,7 @@ func main() {
 	var items []fb.Result
 	var albums []fb.Result
 	jobs := make(chan fb.Result)
+	jobErr := make(chan error)
 	flag.Parse()
 	if *token == "" {
 		log.Fatalln("-token flag is required")
@@ -72,7 +70,7 @@ func main() {
 	fbParams := getFBParams(*token)
 	res, err := fb.Get("/me/albums", fbParams)
 	for w := 1; w <= *workers; w++ {
-		go worker(w, jobs)
+		go worker(w, jobs, jobErr)
 	}
 	if err == nil {
 		res.DecodeField("data", &items)
@@ -87,6 +85,10 @@ func main() {
 					res.DecodeField("images", &albums)
 					for _, photo := range albums {
 						jobs <- photo
+						err := <-jobErr
+						if err != nil {
+							log.Println(err)
+						}
 					}
 				}
 			} else {
